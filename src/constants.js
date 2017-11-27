@@ -9,10 +9,13 @@ if (!Memory.username) {
 global.USERNAME = Memory.username
 global.PUBLIC_ACCOUNT = USERNAME === 'Quorum'
 
+global.MAX_INTEL_TARGETS = 500
+
 global.PRIORITIES_DEFAULT = 6
 
 global.PRIORITIES_CREEP_DEFAULT = 4
 global.PRIORITIES_CREEP_UPGRADER = 6
+global.PRIORITIES_FORTIFY = 6
 
 global.PRIORITIES_SPAWNS = 3
 global.PRIORITIES_DEFENSE = 3
@@ -27,6 +30,7 @@ global.PRIORITIES_PLAYER = 8
 global.PRIORITIES_CITY_REBOOT = 9
 global.PRIORITIES_EMPIRE_MARKET = 10
 global.PRIORITIES_RESPAWNER = 12
+global.PRIORITIES_MAINTENANCE = 12
 
 // how often it gets recorded.
 global.MARKET_STATS_INTERVAL = 750

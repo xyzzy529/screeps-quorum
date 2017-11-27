@@ -32,6 +32,10 @@ class CityMine extends kernel.process {
     this.room = Game.rooms[this.data.room]
 
     if (this.data.mine && this.data.mine !== this.data.room) {
+      // If main room can not support mines kill this program.
+      if (this.room.getRoomSetting('REMOTE_MINES') <= 0) {
+        return this.suicide()
+      }
       this.remote = true
       this.scout()
       if (!Game.rooms[this.data.mine]) {
@@ -136,32 +140,33 @@ class CityMine extends kernel.process {
     }
 
     const haulers = this.getCluster(`haulers_${source.id}`, this.room)
-    let distance = 50
-    if (!this.underAttack && !this.strictSpawning && this.mine.name === this.room.name) {
-      haulers.sizeCluster('hauler', 1)
-    } else if (!this.underAttack && !this.strictSpawning) {
-      if (!this.data.ssp) {
-        this.data.ssp = {}
+    if (!this.data.ssp) {
+      this.data.ssp = {}
+    }
+    if (!this.data.ssp[source.id]) {
+      if (this.room.storage) {
+        this.data.ssp[source.id] = this.room.findPath(this.room.storage.pos, source.pos, {
+          ignoreCreeps: true,
+          maxOps: 6000
+        }).length
       }
-      if (!this.data.ssp[source.id]) {
-        if (this.room.storage) {
-          this.data.ssp[source.id] = this.room.findPath(this.room.storage, source, {
-            ignoreCreeps: true,
-            maxOps: 6000
-          }).length
-        }
-      }
-      distance = this.data.ssp[source.id] ? this.data.ssp[source.id] : 80
-      const carryAmount = (Math.ceil((distance * 20) / 100) * 100) + 200
+    }
+    const distance = this.data.ssp[source.id] ? this.data.ssp[source.id] : 80
+    if (!this.underAttack && !this.strictSpawning) {
       const carryCost = BODYPART_COST['move'] + BODYPART_COST['carry']
-      const maxEnergy = carryCost * (MAX_CREEP_SIZE / 2)
+      const multiplier = this.remote ? 1.8 : 1.3
+      const carryAmount = Math.ceil(((distance * multiplier) * 20) / carryCost) * carryCost
+      const maxEnergy = Math.min(carryCost * (MAX_CREEP_SIZE / 2), this.room.energyCapacityAvailable)
       let energy = (carryAmount / CARRY_CAPACITY) * carryCost // 50 carry == 1m1c == 100 energy
       let quantity = 1
       if (energy > maxEnergy) {
         quantity = 2
-        energy = maxEnergy
+        energy = Math.ceil((energy / 2) / carryCost) * carryCost
       }
-      haulers.sizeCluster('hauler', quantity, {'energy': maxEnergy})
+
+      const respawnTime = ((energy / carryCost) * 2) * CREEP_SPAWN_TIME
+      const respawnAge = respawnTime + (distance * 1.2)
+      haulers.sizeCluster('hauler', quantity, {'energy': energy, 'respawnAge': respawnAge})
     }
 
     haulers.forEach(function (hauler) {
