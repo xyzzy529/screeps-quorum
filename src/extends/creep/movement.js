@@ -1,17 +1,19 @@
 'use strict'
 
+const defaultHighestMaxOps = 5000
+const defaultMaxOpsPerRoom = 1500
 const struckThreshold = 2
 const struckRerouteThreshold = 4
 const travelToDefaults = {
-  'reusePath': 1500,
-  'moveToOverride': true,
-  'ignoreStuck': false,
-  'ignoreHostileCities': true,
-  'ignoreHostileReservations': true
+  reusePath: 1500,
+  moveToOverride: true,
+  ignoreStuck: false,
+  ignoreHostileCities: true,
+  ignoreHostileReservations: false,
+  avoidHostileRooms: false
 }
 
 Creep.prototype.travelTo = function (pos, opts = {}) {
-  const that = this
   if (this.fatigue) {
     return ERR_TIRED
   }
@@ -32,9 +34,23 @@ Creep.prototype.travelTo = function (pos, opts = {}) {
     }
   }
 
+  if (!moveToOpts.scores && !moveToOpts.avoidHostileRooms) {
+    moveToOpts.scores = {}
+    if (moveToOpts.ignoreHostileCities && moveToOpts.ignoreHostileReservations) {
+      moveToOpts.avoidHostileRooms = true
+    } else {
+      if (moveToOpts.ignoreHostileCities) {
+        moveToOpts.scores.WEIGHT_HOSTILE = Infinity
+      }
+      if (moveToOpts.ignoreHostileReservations) {
+        moveToOpts.scores.WEIGHT_HOSTILE_RESERVATION = Infinity
+      }
+    }
+  }
+
   // Compute max operations based on number of rooms.
   if (typeof moveToOpts.maxOps === 'undefined') {
-    moveToOpts.maxOps = 2000 * moveToOpts.maxRooms
+    moveToOpts.maxOps = Math.min(defaultMaxOpsPerRoom * moveToOpts.maxRooms, defaultHighestMaxOps)
   }
 
   // If stuck detection isn't disabled attempt to detect and remediate creeps that are stuck.
@@ -84,15 +100,15 @@ Creep.prototype.travelTo = function (pos, opts = {}) {
 
   if (!moveToOpts.direct && this.room.name !== pos.roomName) {
     if (!moveToOpts.allowedRooms) {
-      moveToOpts.allowedRooms = []
+      moveToOpts.allowedRooms = [this.room.name, pos.roomName]
     }
-    const worldRoute = qlib.map.findRoute(this.room.name, pos.roomName)
+    const worldRoute = qlib.map.findRoute(this.room.name, pos.roomName, moveToOpts)
     if (Number.isInteger(worldRoute)) {
       return worldRoute
     }
-    for (let pathPiece of worldRoute) {
-      if (moveToOpts.allowedRooms.indexOf(pathPiece['room']) < 0) {
-        moveToOpts.allowedRooms.push(pathPiece['room'])
+    for (const pathPiece of worldRoute) {
+      if (moveToOpts.allowedRooms.indexOf(pathPiece.room) < 0) {
+        moveToOpts.allowedRooms.push(pathPiece.room)
       }
     }
   }
@@ -107,21 +123,6 @@ Creep.prototype.travelTo = function (pos, opts = {}) {
     moveToOpts.costCallback = function (roomname) {
       if (moveToOpts.allowedRooms && moveToOpts.allowedRooms.indexOf(roomname) < 0) {
         return false
-      }
-      // See if hostile cities or reservations are blocked
-      if (!opts.ignoreHostileCities || !opts.ignoreHostileReservations) {
-        // Make sure not to deny costmatrix data for the room the creep is in or going to.
-        if (pos.roomName !== roomname && that.pos.roomName !== roomname) {
-          const roominfo = Room.getIntel(roomname)
-          // Don't block rooms owner by the player
-          if (roominfo[INTEL_OWNER] && roominfo[INTEL_OWNER] !== USERNAME) {
-            if (roominfo[INTEL_LEVEL] && !opts.ignoreHostileCities) {
-              return false
-            } else if (!roominfo[INTEL_LEVEL] && !opts.ignoreHostileReservations) {
-              return false
-            }
-          }
-        }
       }
       return Room.getCostmatrix(roomname, opts)
     }

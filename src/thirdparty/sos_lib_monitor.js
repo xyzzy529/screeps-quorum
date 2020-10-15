@@ -1,4 +1,4 @@
-
+'use strict'
 
 var Monitor = function () {
   if(!Memory.sos) {
@@ -74,6 +74,10 @@ Monitor.prototype.getPriorityRunStats = function (priority) {
   var data = Memory.sos.monitor.priority_tbr[priority]
   var buckets = Object.keys(data)
   buckets.sort((a,b) => parseInt(b) - parseInt(a))
+
+  if (!data[currbucket]) {
+    data[currbucket] = 0
+  }
 
   var shortticks = data[currbucket]
   var mediumticks = data[currbucket]

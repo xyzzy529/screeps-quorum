@@ -32,10 +32,10 @@ class CityDefense extends kernel.process {
       return this.suicide()
     }
 
-    const room = Game.rooms[this.data.room]
-    const towers = room.structures[STRUCTURE_TOWER]
+    this.room = Game.rooms[this.data.room]
+    const towers = this.room.structures[STRUCTURE_TOWER]
 
-    const hostiles = room.find(FIND_HOSTILE_CREEPS)
+    const hostiles = this.room.find(FIND_HOSTILE_CREEPS)
 
     if (towers && towers.length > 0) {
       this.fireTowers(towers, hostiles)
@@ -45,18 +45,28 @@ class CityDefense extends kernel.process {
       this.launchCreepProcess('loader', 'replenisher', this.data.room, 1)
     }
 
-    const playerHostiles = hostiles.filter(c => c.owner.username !== 'Invader' && this.isPotentialHazard(c))
-
+    const playerHostiles = this.room.getHostilesByPlayer()
     if (playerHostiles.length > 0) {
-      Logger.log(`Hostile creep owned by ${playerHostiles[0].owner.username} detected in room ${this.data.room}.`, LOG_WARN)
-      qlib.notify.send(`Hostile creep owned by ${playerHostiles[0].owner.username} detected in room ${this.data.room}.`, 1000)
-      this.safeMode(playerHostiles)
+      let aggression = AGGRESSION_INVADE
+      if (!this.room.controller.my || !this.room.structures[STRUCTURE_SPAWN]) {
+        aggression = AGGRESSION_RAZE
+      } else if (this.room.controller.safemode) {
+        aggression = AGGRESSION_TRIGGER_SAFEMODE
+      } else if (this.room.controller.upgradeBlocked) {
+        aggression = AGGRESSION_BLOCK_UPGRADE
+      }
+      for (const user in playerHostiles) {
+        Logger.log(`Hostile creep owned by ${user} detected in room ${this.data.room}.`, LOG_WARN)
+        qlib.notify.send(`Hostile creep owned by ${user} detected in room ${this.data.room}.`, TICKS_BETWEEN_ALERTS)
+        Empire.dossier.recordAggression(user, this.data.room, aggression)
+      }
+      this.safeMode()
     }
   }
 
   fireTowers (towers, hostiles) {
     const attackFunc = (attackTarget) => {
-      for (let tower of towers) {
+      for (const tower of towers) {
         if (tower.energy < TOWER_ENERGY_COST) {
           continue
         }
@@ -68,7 +78,7 @@ class CityDefense extends kernel.process {
     const healFunc = (healTarget) => {
       let damage = healTarget.hitsMax - healTarget.hits
 
-      for (let tower of towers) {
+      for (const tower of towers) {
         if (damage <= 0) {
           break
         }
@@ -112,7 +122,8 @@ class CityDefense extends kernel.process {
     }
   }
 
-  safeMode (hostiles) {
+  safeMode () {
+    const hostiles = this.room.getPlayerHostiles()
     const room = Game.rooms[this.data.room]
     if (room.controller.safeMode && room.controller.safeMode > 0) {
       return true
@@ -121,7 +132,7 @@ class CityDefense extends kernel.process {
       return false
     }
 
-    let safeStructures = room.find(FIND_MY_SPAWNS)
+    const safeStructures = room.find(FIND_MY_SPAWNS)
 
     // If there are no spawns this room isn't worth protecting with a safemode.
     if (safeStructures.length <= 0) {
@@ -132,18 +143,18 @@ class CityDefense extends kernel.process {
     if (!room.getRoomSetting('ALWAYS_SAFEMODE')) {
       const cities = Room.getCities()
       let highestLevel = 0
-      for (let cityName of cities) {
+      for (const cityName of cities) {
         if (!Game.rooms[cityName]) {
           continue
         }
-        let city = Game.rooms[cityName]
+        const city = Game.rooms[cityName]
         if (!city.controller.canSafemode()) {
           continue
         }
         if (city.getRoomSetting('ALWAYS_SAFEMODE')) {
           return false
         }
-        let level = city.getPracticalRoomLevel()
+        const level = city.getPracticalRoomLevel()
         if (highestLevel < level) {
           highestLevel = level
         }
@@ -166,11 +177,6 @@ class CityDefense extends kernel.process {
       }
     }
     return false
-  }
-
-  isPotentialHazard (hostile) {
-    const hazardTypes = [ATTACK, RANGED_ATTACK, HEAL, WORK, CLAIM]
-    return _.some(hostile.body, b => _.include(hazardTypes, b.type))
   }
 
   calculateWithFallOff (optimalValue, distance) {

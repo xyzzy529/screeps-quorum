@@ -1,24 +1,27 @@
 'use strict'
 
-let fs = require('fs')
-let gulp = require('gulp')
-let screeps = require('gulp-screeps')
-let rename = require('gulp-rename')
-let insert = require('gulp-insert')
-let clean = require('gulp-clean')
-let minimist = require('minimist')
+const fs = require('fs')
+const gulp = require('gulp')
+const screeps = require('gulp-screeps')
+const rename = require('gulp-rename')
+const insert = require('gulp-insert')
+const del = require('del')
+const minimist = require('minimist')
+const git = require('git-rev-sync')
 
-let args = minimist(process.argv.slice(2))
+const args = minimist(process.argv.slice(2))
+const commitdate = git.date()
 
 gulp.task('clean', () => {
-  return gulp.src('dist/', { read: false }).pipe(clean())
+  return del('dist/*')
 })
 
-gulp.task('copy', ['clean'], () => {
-  return gulp.src('src/**/*.js').pipe(rename((path) => {
-    let parts = path.dirname.match(/[^/\\]+/g)
+gulp.task('copy', gulp.series('clean', () => {
+  const src = gulp.src('src/**/*.js')
+  return src.pipe(rename((path) => {
+    const parts = path.dirname.match(/[^/\\]+/g)
     let name = ''
-    for (let i in parts) {
+    for (const i in parts) {
       if (parts[i] !== '.') {
         name += parts[i] + '_'
       }
@@ -30,31 +33,37 @@ gulp.task('copy', ['clean'], () => {
     let name = file.path.match(/[^/\\]+/g)
     name = name[name.length - 1]
     if (name === 'version.js') {
-      return `${contents}\nglobal.SCRIPT_VERSION = ${+new Date()}` // jshint ignore:line
+      return `${contents}\nglobal.SCRIPT_VERSION = ${+commitdate}` // jshint ignore:line
     }
     return contents
   })).pipe(gulp.dest('dist/'))
-})
+}))
 
-gulp.task('deploy', ['copy'], () => {
-  let config = require('./.screeps.json')
-  let opts = config[args.server || 'main']
-  let options = {}
+function deploy () {
+  const config = require('./.screeps.json')
+  const opts = config[args.server || 'main']
+  const options = {}
   if (!opts) {
-    let err = new Error(`No configuration exists for server "${args.server || 'main'}`)
+    const err = new Error(`No configuration exists for server "${args.server || 'main'}`)
     err.showStack = false
     throw err
   }
 
   // allow overrides from passed arguments
-  for (let i in args) { // jshint ignore:line
+  for (const i in args) { // jshint ignore:line
     opts[i] = args[i]
   }
 
   options.ptr = opts.ptr || false
   options.branch = opts.branch || 'default'
-  options.email = opts.email || opts.username
-  options.password = opts.password
+
+  if (opts.token) {
+    options.token = opts.token
+  } else {
+    options.email = opts.email || opts.username
+    options.password = opts.password
+  }
+
   if (args.server && args.server !== 'main' && !opts.host) {
     options.host = args.server
   } else {
@@ -64,29 +73,33 @@ gulp.task('deploy', ['copy'], () => {
   options.port = opts.port || 443
 
   return gulp.src('dist/*.js').pipe(screeps(options))
+}
+
+gulp.task('deploy', gulp.series('copy', () => {
+  return deploy()
+}))
+
+gulp.task('ci-version', (cb) => {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+  const seconds = (commitdate.getHours() * 3600) + (commitdate.getMinutes() * 60) + commitdate.getSeconds()
+  const year = commitdate.getFullYear()
+  const month = commitdate.getMonth() + 1
+  const day = commitdate.getDate()
+  pkg.version = `${year}.${month}.${day}-${seconds}`
+  fs.writeFile('package.json', JSON.stringify(pkg, null, 2), cb)
 })
 
-gulp.task('ci-config', ['ci-version'], (cb) => {
+gulp.task('ci-config', gulp.series('ci-version', (cb) => {
   fs.writeFile('.screeps.json', JSON.stringify({
     main: {
       ptr: !!process.env.SCREEPS_PTR,
       branch: process.env.SCREEPS_BRANCH,
-      email: process.env.SCREEPS_EMAIL,
-      password: process.env.SCREEPS_PASSWORD,
+      token: process.env.SCREEPS_TOKEN,
       host: process.env.SCREEPS_HOST,
       ssl: !!process.env.SCREEPS_SSL,
       port: process.env.SCREEPS_PORT
     }
   }), cb)
-})
-gulp.task('ci-version', (cb) => {
-  let pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
-  let now = new Date()
-  let seconds = (now.getHours() * 3600) + (now.getMinutes() * 60) + now.getSeconds()
-  let year = now.getFullYear()
-  let month = now.getMonth() + 1
-  let day = now.getDate()
-  pkg.version = `${year}.${month}.${day}-${seconds}`
-  fs.writeFile('package.json', JSON.stringify(pkg, null, 2), cb)
-})
-gulp.task('default', ['clean', 'copy', 'deploy'])
+}))
+
+gulp.task('default', gulp.series('deploy'))

@@ -16,8 +16,17 @@ class Player extends kernel.process {
     }
     const empireAge = qlib.events.getTimeSinceEvent('epoch')
 
+    if (!this.data.gcl) {
+      this.data.gcl = Game.gcl.level
+    }
+    if (this.data.gcl < Game.gcl.level) {
+      qlib.notify.send(`GCL has increased to ${Game.gcl.level}`)
+      this.data.gcl = Game.gcl.level
+    }
+
     this.launchChildProcess('respawner', 'respawner')
     this.launchChildProcess('intel', 'empire_intel')
+    this.launchChildProcess('observers', 'empire_observers')
     this.launchChildProcess('market', 'empire_market')
     this.launchChildProcess('maintenance', 'meta_maintenance')
 
@@ -27,14 +36,14 @@ class Player extends kernel.process {
       /* Launch a "City" program for each city saved in memory. `Room.addCity` to add new rooms. */
       if (Game.rooms[roomname] && Game.rooms[roomname].controller && Game.rooms[roomname].controller.my) {
         this.launchChildProcess(`room_${roomname}`, 'city', {
-          'room': roomname
+          room: roomname
         })
       }
     }
 
-    for (let priority of MONITOR_PRIORITIES) {
+    for (const priority of MONITOR_PRIORITIES) {
       this.launchChildProcess(`pmonitor_${priority}`, 'meta_monitor', {
-        'priority': priority
+        priority: priority
       })
     }
 
@@ -45,7 +54,7 @@ class Player extends kernel.process {
     const lastAdd = qlib.events.getTimeSinceEvent('addcity')
     if (empireAge > 10000 && lastAdd > 2000) {
       const defaultPriorityStats = sos.lib.monitor.getPriorityRunStats(PRIORITIES_CREEP_DEFAULT)
-      if (defaultPriorityStats && defaultPriorityStats['long'] <= 1.25) {
+      if (defaultPriorityStats && defaultPriorityStats.long <= 1.25) {
         if (cities.length < Game.gcl.level) {
           if (cities.length > 1 || (Game.rooms[cities[0]] && Game.rooms[cities[0]].getRoomSetting('EXPAND_FROM'))) {
             this.launchChildProcess('expand', 'empire_expand')

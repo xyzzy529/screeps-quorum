@@ -9,6 +9,10 @@ if (PUBLIC_ACCOUNT) {
 }
 
 class Spook extends MetaRole {
+  getPriority (creep) {
+    return PRIORITIES_CREEP_SPOOK
+  }
+
   getBuild (room, options) {
     return [MOVE]
   }
@@ -54,7 +58,7 @@ class Spook extends MetaRole {
   stompConstruction (creep) {
     // Use cached construction site
     if (creep.memory.stomp) {
-      let construction = Game.getObjectById(creep.memory.stomp)
+      const construction = Game.getObjectById(creep.memory.stomp)
       if (construction) {
         creep.travelTo(construction)
         return true
@@ -63,9 +67,11 @@ class Spook extends MetaRole {
       }
     }
     // Find a new site to stomp, excluding any being stood on.
-    const construction = creep.pos.findClosestByRange(FIND_HOSTILE_CONSTRUCTION_SITES, {filter: function (site) {
-      return site.pos.getRangeTo(creep) > 0
-    }})
+    const construction = creep.pos.findClosestByRange(FIND_HOSTILE_CONSTRUCTION_SITES, {
+      filter: function (site) {
+        return site.pos.getRangeTo(creep) > 0
+      }
+    })
     if (!construction) {
       return false
     }
@@ -75,10 +81,24 @@ class Spook extends MetaRole {
   }
 
   signController (creep) {
+    // Cannot sign SK or highway rooms
     if (!creep.room.controller) {
       return false
     }
+    // Already Signed
     if (creep.room.controller.sign && creep.room.controller.sign.username === USERNAME) {
+      return false
+    }
+    // Not ours (reserved)
+    if (creep.room.controller.reservation && creep.room.controller.reservation.username !== USERNAME) {
+      return false
+    }
+    // Not ours (owned)
+    if (creep.room.controller.owner && creep.room.controller.owner.username !== USERNAME) {
+      return false
+    }
+    // Signed too recently
+    if (creep.room.controller.sign && Game.time - creep.room.controller.sign.time > CONTROLLER_RESIGN_COOLDOWN) {
       return false
     }
     if (creep.pos.isNearTo(creep.room.controller)) {
@@ -97,7 +117,11 @@ class Spook extends MetaRole {
       target = Room.getScoutTarget(creep)
       creep.memory.starget = target
     }
-    if (creep.travelTo(new RoomPosition(25, 25, target), {range: 23}) === ERR_NO_PATH) {
+    const ret = creep.travelTo(new RoomPosition(25, 25, target), {
+      range: 23,
+      ignoreHostileCities: false
+    })
+    if (ret === ERR_NO_PATH) {
       delete creep.memory.starget
     }
   }

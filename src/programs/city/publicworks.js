@@ -9,7 +9,7 @@ const maintainStructures = [
 class CityPublicWorks extends kernel.process {
   constructor (...args) {
     super(...args)
-    this.priority = PRIORITIES_CONSTRUCTION
+    this.priority = PRIORITIES_PUBLICWORKS
   }
 
   getDescriptor () {
@@ -22,9 +22,11 @@ class CityPublicWorks extends kernel.process {
     }
     this.room = Game.rooms[this.data.room]
 
-    const sites = this.room.find(FIND_MY_CONSTRUCTION_SITES, {'filter': function (structure) {
-      return maintainStructures.includes(structure)
-    }})
+    const sites = this.room.find(FIND_MY_CONSTRUCTION_SITES, {
+      filter: function (structure) {
+        return maintainStructures.includes(structure)
+      }
+    })
     if (sites.length > 0 && this.room.isEconomyCapable('BUILD_STRUCTURES')) {
       this.launchCreepProcess('builders', 'builder', this.data.room, 1)
     }
@@ -42,6 +44,9 @@ class CityPublicWorks extends kernel.process {
       return
     }
     if (this.room.find(FIND_HOSTILE_CREEPS).length > 0) {
+      return
+    }
+    if (!this.room.isEconomyCapable('MAINTAIN_STRUCTURES')) {
       return
     }
     let lowestHealth = 1

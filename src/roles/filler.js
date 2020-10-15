@@ -5,7 +5,7 @@ const MetaRole = require('roles_meta')
 class Filler extends MetaRole {
   constructor () {
     super()
-    this.defaultEnergy = 2200
+    this.defaultEnergy = 1800
     this.fillableStructures = [STRUCTURE_SPAWN, STRUCTURE_EXTENSION, STRUCTURE_TERMINAL]
   }
 
@@ -23,6 +23,9 @@ class Filler extends MetaRole {
       return creep.recycle()
     }
     if (creep.recharge()) {
+      if (creep.memory.ft) {
+        delete creep.memory.ft
+      }
       return
     }
 
@@ -48,7 +51,7 @@ class Filler extends MetaRole {
     // If nothing else to fill, and structure is allowed, fill terminal.
     if (creep.room.isEconomyCapable('SUPPLY_TERMINAL')) {
       if (this.fillableStructures.includes(STRUCTURE_TERMINAL) && creep.room.terminal) {
-        if (creep.room.terminal.store[RESOURCE_ENERGY] < 20000) {
+        if (creep.room.terminal.store[RESOURCE_ENERGY] < TERMINAL_ENERGY) {
           this.fillStructure(creep, creep.room.terminal)
         }
       }
@@ -71,7 +74,11 @@ class Filler extends MetaRole {
     if (creep.pos.isNearTo(structure)) {
       creep.transfer(structure, RESOURCE_ENERGY, Math.min(creep.carry[RESOURCE_ENERGY], structure.energyCapacity - structure.energy))
     } else {
-      creep.travelTo(structure)
+      const opts = {}
+      if (structure.structureType === STRUCTURE_TOWER) {
+        opts.ignoreCore = true
+      }
+      creep.travelTo(structure, opts)
     }
   }
 }

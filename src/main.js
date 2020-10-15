@@ -8,7 +8,7 @@ if (Game.cpu.bucket < 500) {
 
 /* Get Upload Version */
 require('version')
-require('constants')
+require('./constants')
 
 /* Enable QOS Logger */
 const QosLogger = require('qos_logger')
@@ -24,8 +24,8 @@ require('thirdparty_roomvisual')
 /* Add "creep talk" library - https://github.com/screepers/creeptalk */
 const language = require('thirdparty_creeptalk_emoji')
 require('thirdparty_creeptalk')({
-  'public': true,
-  'language': language
+  public: true,
+  language: language
 })
 
 /* Make the quorum library code available globally */
@@ -37,7 +37,11 @@ require('extends_creep')
 require('extends_creep_actions')
 require('extends_creep_movement')
 require('extends_creep_overrides')
+require('extends_lab')
 require('extends_mineral')
+require('extends_observer')
+require('extends_room_alchemy')
+require('extends_room_conflict')
 require('extends_room_construction')
 require('extends_room_control')
 require('extends_room_economy')
@@ -50,17 +54,22 @@ require('extends_room_spawning')
 require('extends_room_structures')
 require('extends_room_territory')
 require('extends_roomposition')
+require('extends_terminal')
 require('extends_source')
+require('extends_storage')
 
 const QosKernel = require('qos_kernel')
 
 module.exports.loop = function () {
   if (Game.cpu.bucket < 500) {
-    Logger.log('Extremely low bucket - aborting script run at start of loop', LOG_FATAL)
+    if (Game.cpu.limit !== 0) {
+      Logger.log('Extremely low bucket - aborting script run at start of loop', LOG_FATAL)
+    }
     return
   }
   const kernel = new QosKernel()
   kernel.start()
+  global.Empire = new qlib.Empire()
   kernel.run()
   kernel.shutdown()
 }

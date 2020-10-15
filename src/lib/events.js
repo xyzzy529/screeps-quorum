@@ -1,3 +1,4 @@
+'use strict'
 
 class Events {
   constructor () {
@@ -19,7 +20,7 @@ class Events {
   }
 
   getTimeSinceEvent (event) {
-    return Game.time - this.getEventTime()
+    return Game.time - this.getEventTime(event)
   }
 
   hasEventHappened (event) {

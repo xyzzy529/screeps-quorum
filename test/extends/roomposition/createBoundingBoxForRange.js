@@ -1,8 +1,9 @@
-import test from 'ava'
+'use strict'
+const test = require('ava')
 
-import '../../helpers/screeps-globals'
+require('../../helpers/screeps-globals')
 
-import { createBoundingBoxForRange } from '../../../src/extends/roomposition'
+const { createBoundingBoxForRange } = require('../../../src/extends/roomposition')
 
 const BOUND_MIN = 0
 const BOUND_MAX = 49

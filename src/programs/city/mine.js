@@ -2,12 +2,15 @@
 
 /**
  * Mine sources in local room, placing energy in storage.
+ *
+ * data.room - The name of the claimed room which is doing the mining.
+ * data.mine - The name of the remote room being mined, or undefined if === data.room.
  */
 
 class CityMine extends kernel.process {
   constructor (...args) {
     super(...args)
-    this.priority = PRIORITIES_CONSTRUCTION
+    this.priority = PRIORITIES_MINE
   }
 
   getDescriptor () {
@@ -32,20 +35,51 @@ class CityMine extends kernel.process {
     this.room = Game.rooms[this.data.room]
 
     if (this.data.mine && this.data.mine !== this.data.room) {
-      // If main room can not support mines kill this program.
-      if (this.room.getRoomSetting('REMOTE_MINES') <= 0) {
+      // If we mine in another colony's room stop doing that.
+      if (Game.rooms[this.data.mine] && Game.rooms[this.data.mine].controller.my) {
         return this.suicide()
       }
+
+      // If main room can not support mines kill this program.
+      const desiredMines = this.room.getRoomSetting('REMOTE_MINES')
+      // mineId starts at 0 for the first mine.
+      const mineId = this.room.getMineId(this.data.mine)
+
+      if (mineId === false) {
+        return this.suicide()
+      }
+
+      // Adjust mineId to start with 1, then clear it if it is greater than desired.
+      if ((mineId + 1) > desiredMines) {
+        this.room.removeMine(this.data.mine)
+        return this.suicide()
+      }
+
+      // If the mine is not reachable remove it.
+      if (!Game.rooms[this.data.mine]) {
+        const route = qlib.map.findRoute(this.data.room, this.data.mine, { avoidHostileRooms: true })
+        if (route === ERR_NO_PATH) {
+          this.room.removeMine(this.data.mine)
+          return this.suicide()
+        }
+      }
+
       this.remote = true
       this.scout()
+      this.defend()
       if (!Game.rooms[this.data.mine]) {
         return
       }
       this.mine = Game.rooms[this.data.mine]
       this.underAttack = this.mine.find(FIND_HOSTILE_CREEPS).length > 0
-      this.reserveRoom()
-      if (this.room.getEconomyLevel() >= ECONOMY_BURSTING) {
-        this.strictSpawning = this.room.getRoomSetting('ALLOW_MINING_SCALEBACK')
+      if (this.room.isEconomyCapable('REMOTE_MINES')) {
+        this.reserveRoom(!this.underAttack)
+        if (this.room.getEconomyLevel() >= ECONOMY_BURSTING) {
+          this.strictSpawning = this.room.getRoomSetting('ALLOW_MINING_SCALEBACK')
+        }
+      } else {
+        this.reserveRoom(false)
+        this.strictSpawning = true
       }
     } else {
       this.mine = this.room
@@ -61,14 +95,20 @@ class CityMine extends kernel.process {
   mineSource (source) {
     // Identify where the miner should sit and any container should be built
     const minerPos = source.getMiningPosition()
+    const link = source.getActiveLink()
 
     // Look for a container
     const containers = _.filter(minerPos.lookFor(LOOK_STRUCTURES), (a) => a.structureType === STRUCTURE_CONTAINER)
-    const container = containers.length > 0 ? containers[0] : false
+    let container = containers.length > 0 ? containers[0] : false
+
+    if (link && container) {
+      container.destroy()
+      container = false
+    }
 
     // Build container if it isn't there
     let construction = false
-    if (!container) {
+    if (!container && !link) {
       const constructionSites = minerPos.lookFor(LOOK_CONSTRUCTION_SITES)
       if (constructionSites.length <= 0) {
         this.mine.createConstructionSite(minerPos, STRUCTURE_CONTAINER)
@@ -90,14 +130,14 @@ class CityMine extends kernel.process {
       minerQuantity = 0
     }
 
-    miners.sizeCluster('miner', minerQuantity, {'priority': 2})
+    miners.sizeCluster('miner', minerQuantity, { priority: 2, remote: this.remote })
     miners.forEach(function (miner) {
       if (miner.pos.getRangeTo(minerPos) !== 0) {
         miner.travelTo(minerPos)
         return
       }
 
-      let needsRepairs = container && container.hits < container.hitsMax
+      const needsRepairs = container && container.hits < container.hitsMax
 
       if (construction && miner.carry[RESOURCE_ENERGY]) {
         miner.build(construction)
@@ -108,7 +148,15 @@ class CityMine extends kernel.process {
       } else if (source.energy > 0) {
         miner.harvest(source)
       }
+      if (link && (miner.carryCapacity - _.sum(miner.carry) < 15)) {
+        miner.transfer(link, RESOURCE_ENERGY)
+      }
     })
+
+    if (link.energy > 0 && !link.cooldown) {
+      const sinks = this.room.getSinkLinks()
+      link.transferEnergy(sinks[0])
+    }
 
     let storage = false
     if (this.room.storage) {
@@ -117,7 +165,6 @@ class CityMine extends kernel.process {
       storage = this.room.terminal
     } else if (this.remote) {
       const containers = this.room.structures[STRUCTURE_CONTAINER]
-
       if (containers && containers.length > 0) {
         if (containers.length > 1) {
           containers.sort((a, b) => a.store[RESOURCE_ENERGY] - b.store[RESOURCE_ENERGY])
@@ -135,7 +182,7 @@ class CityMine extends kernel.process {
     }
 
     // If using containers spawn haulers
-    if (!container || !storage) {
+    if (link || !container || !storage) {
       return
     }
 
@@ -153,7 +200,7 @@ class CityMine extends kernel.process {
     }
     const distance = this.data.ssp[source.id] ? this.data.ssp[source.id] : 80
     if (!this.underAttack && !this.strictSpawning) {
-      const carryCost = BODYPART_COST['move'] + BODYPART_COST['carry']
+      const carryCost = BODYPART_COST.move + BODYPART_COST.carry
       const multiplier = this.remote ? 1.8 : 1.3
       const carryAmount = Math.ceil(((distance * multiplier) * 20) / carryCost) * carryCost
       const maxEnergy = Math.min(carryCost * (MAX_CREEP_SIZE / 2), this.room.energyCapacityAvailable)
@@ -166,7 +213,7 @@ class CityMine extends kernel.process {
 
       const respawnTime = ((energy / carryCost) * 2) * CREEP_SPAWN_TIME
       const respawnAge = respawnTime + (distance * 1.2)
-      haulers.sizeCluster('hauler', quantity, {'energy': energy, 'respawnAge': respawnAge})
+      haulers.sizeCluster('hauler', quantity, { energy: energy, respawnAge: respawnAge })
     }
 
     haulers.forEach(function (hauler) {
@@ -200,7 +247,7 @@ class CityMine extends kernel.process {
   scout () {
     const center = new RoomPosition(25, 25, this.data.mine)
     const quantity = Game.rooms[this.data.mine] ? 0 : 1
-    const scouts = this.getCluster(`scout`, this.room)
+    const scouts = this.getCluster('scout', this.room)
     scouts.sizeCluster('spook', quantity)
     scouts.forEach(function (scout) {
       if (scout.room.name === center.roomName) {
@@ -208,22 +255,19 @@ class CityMine extends kernel.process {
           return
         }
       }
-      scout.travelTo(center, {range: 20})
+      scout.travelTo(center, { range: 20 })
     })
   }
 
-  reserveRoom () {
-    if (this.underAttack) {
-      return
-    }
+  reserveRoom (shouldSpawn) {
     const controller = this.mine.controller
     const timeout = controller.reservation ? controller.reservation.ticksToEnd : 0
     let quantity = 0
-    if (timeout < 3500) {
+    if (timeout < 3500 && shouldSpawn) {
       quantity = Math.min(this.room.getRoomSetting('RESERVER_COUNT'), controller.pos.getSteppableAdjacent().length)
     }
 
-    const reservists = this.getCluster(`reservists`, this.room)
+    const reservists = this.getCluster('reservists', this.room)
     reservists.sizeCluster('reservist', quantity)
     reservists.forEach(function (reservist) {
       if (!reservist.pos.isNearTo(controller)) {
@@ -232,6 +276,32 @@ class CityMine extends kernel.process {
         reservist.reserveController(controller)
       }
     })
+  }
+
+  defend () {
+    if (!this.mine) {
+      return
+    }
+    this.recordAggression()
+  }
+
+  recordAggression () {
+    if (this.mine.controller.owner && this.mine.controller.owner.username !== USERNAME) {
+      Empire.dossier.recordAggression(this.mine.controller.owner.username, this.data.mine, AGGRESSION_CLAIM)
+      return
+    }
+    if (this.mine.controller.reservation && this.mine.controller.reservation.username !== USERNAME) {
+      Empire.dossier.recordAggression(this.mine.controller.reservation.username, this.data.mine, AGGRESSION_RESERVE)
+      return
+    }
+    const playerHostiles = this.mine.getHostilesByPlayer()
+    if (playerHostiles.length > 0) {
+      for (const user in playerHostiles) {
+        Logger.log(`Hostile creep owned by ${user} detected in room ${this.data.room}.`, LOG_WARN)
+        qlib.notify.send(`Hostile creep owned by ${user} detected in room ${this.data.room}.`, TICKS_BETWEEN_ALERTS)
+        Empire.dossier.recordAggression(user, this.data.room, AGGRESSION_HARASS)
+      }
+    }
   }
 }
 

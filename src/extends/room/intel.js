@@ -3,7 +3,6 @@
 global.SEGMENT_INTEL = 'room_intel'
 sos.lib.vram.markCritical(SEGMENT_INTEL)
 
-const recheckInterval = 50000
 const maxScoutDistance = 11
 
 // To reduce memory we use short keys for the room objects, so for readability those are mapped to global constants.
@@ -17,6 +16,14 @@ global.INTEL_RESOURCE_POSITIONS = 'p'
 global.INTEL_WALKABILITY = 'w'
 global.INTEL_SWAMPINESS = 'a'
 global.INTEL_BLOCKED_EXITS = 'b'
+
+Room.Terrain.prototype.isWalkable = function (x, y) {
+  return !(this.get(x, y) & TERRAIN_MASK_WALL)
+}
+
+Room.Terrain.prototype.isSwamp = function (x, y) {
+  return (this.get(x, y) === TERRAIN_MASK_SWAMP)
+}
 
 Room.prototype.saveIntel = function (refresh = false) {
   if (!Memory.intel) {
@@ -32,13 +39,14 @@ Room.prototype.saveIntel = function (refresh = false) {
   if (refresh) {
     roominfo = {}
   } else {
-    roominfo = this.getIntel({'skipRequest': true})
+    roominfo = this.getIntel({ skipRequest: true })
     if (!roominfo) {
       roominfo = {}
     }
   }
 
-  roominfo[INTEL_UPDATED] = Game.time
+  // Add some random variance to this value to spread out intel expirations
+  roominfo[INTEL_UPDATED] = Game.time - _.random(0, 10)
 
   // Record room owner, level, and blocked exits
   if (this.controller) {
@@ -57,31 +65,38 @@ Room.prototype.saveIntel = function (refresh = false) {
       delete roominfo[INTEL_PRACTICAL_LEVEL]
     }
 
-    let candidates = this.find(FIND_SOURCES)
-    candidates.push(this.controller)
-    const centerish = this.getPositionAt(25, 25).findClosestByRange(candidates).pos
-    const exits = _.values(Game.map.describeExits(this.name))
-    const name = this.name
-    let blocked = []
-    for (let exit of exits) {
-      const targetPos = new RoomPosition(25, 25, exit)
-      const path = PathFinder.search(centerish, {pos: targetPos, range: 24},
-        {
-          swampCost: 1,
-          maxRooms: 2,
-          maxCost: 2500,
-          roomCallback: function (roomName) {
-            if (roomName !== name && roomName !== exit) {
-              return false
+    // Detect blocked exits in rooms where walls or ramparts are built.
+    const blocked = []
+    if (this.structures[STRUCTURE_WALL] || this.structures[STRUCTURE_RAMPART]) {
+      const candidates = this.find(FIND_SOURCES)
+      candidates.push(this.controller)
+      const centerish = this.getPositionAt(25, 25).findClosestByRange(candidates).pos
+      const exits = _.values(Game.map.describeExits(this.name))
+      const name = this.name
+      for (const exit of exits) {
+        const targetPos = new RoomPosition(25, 25, exit)
+        const path = PathFinder.search(centerish, { pos: targetPos, range: 24 },
+          {
+            swampCost: 1,
+            maxRooms: 2,
+            maxCost: 1000,
+            roomCallback: function (roomName) {
+              if (roomName !== name && roomName !== exit) {
+                return false
+              }
+              return Room.getCostmatrix(roomName, {
+                ignoreSourceKeepers: true,
+                ignoreCreeps: true,
+                ignoreExits: true,
+                ignoreRoads: true,
+                ignorePortals: true,
+                noCache: true
+              })
             }
-            return Room.getCostmatrix(roomName, {
-              ignoreSourceKeepers: true,
-              ignoreCreeps: true
-            })
-          }
-        })
-      if (path.incomplete) {
-        blocked.push(exit)
+          })
+        if (path.incomplete) {
+          blocked.push(exit)
+        }
       }
     }
     if (blocked.length > 0) {
@@ -125,13 +140,13 @@ Room.prototype.saveIntel = function (refresh = false) {
     let swamps = 0
     let x
     let y
+    const terrain = Game.map.getRoomTerrain(this.name)
     for (x = 0; x < 50; x++) {
       for (y = 0; y < 50; y++) {
-        const terrain = Game.map.getTerrainAt(x, y, this.name)
-        if (terrain === 'swamp' || terrain === 'plain') {
+        if (terrain.isWalkable(x, y)) {
           walkable++
         }
-        if (terrain === 'swamp') {
+        if (terrain.isSwamp(x, y)) {
           swamps++
         }
       }
@@ -187,9 +202,6 @@ Room.getIntel = function (roomname, opts = {}) {
 
   const intelmap = sos.lib.vram.getData(SEGMENT_INTEL)
   if (intelmap[roomname]) {
-    if (!opts.skipRequest && Game.time - intelmap[roomname][INTEL_UPDATED] > recheckInterval) {
-      Room.requestIntel(roomname)
-    }
     return intelmap[roomname]
   }
 
@@ -198,7 +210,7 @@ Room.getIntel = function (roomname, opts = {}) {
     if (Memory.intel && Memory.intel.buffer[roomname]) {
       return Memory.intel.buffer[roomname]
     }
-  } else {
+  } else if (qlib.map.getDistanceToEmpire(roomname, 'manhattan') <= 18) {
     Room.requestIntel(roomname)
   }
 
@@ -212,10 +224,9 @@ Room.prototype.getIntel = function (opts = {}) {
 Room.getResourcesPositions = function (roomname) {
   const roominfo = Room.getIntel(roomname)
   if (!roominfo[INTEL_RESOURCE_POSITIONS]) {
-    Room.requestIntel(roomname)
     return false
   }
-  let positions = []
+  const positions = []
   let serializedPosition
   for (serializedPosition of roominfo[INTEL_RESOURCE_POSITIONS]) {
     positions.push(RoomPosition.deserialize(serializedPosition))
@@ -231,7 +242,7 @@ Room.requestIntel = function (roomname) {
   if (!Game.map.isRoomAvailable(roomname)) {
     return
   }
-  if (!qlib.map.reachableFromEmpire(roomname)) {
+  if (!qlib.map.reachableFromEmpire(roomname, 'manhattan')) {
     return
   }
   if (!Memory.intel) {
@@ -241,6 +252,12 @@ Room.requestIntel = function (roomname) {
       active: {}
     }
   }
+
+  // Hard limit on MAX_INTEL_TARGETS rooms targetted to prevent memory leak.
+  const current = Object.keys(Memory.intel.targets)
+  if (current.length >= MAX_INTEL_TARGETS) {
+    return
+  }
   if (!Memory.intel.targets[roomname]) {
     Memory.intel.targets[roomname] = Game.time
   }
@@ -248,8 +265,14 @@ Room.requestIntel = function (roomname) {
 
 Room.getScoutTarget = function (creep) {
   let target = false
-  const targetRooms = !Memory.intel ? [] : _.shuffle(Object.keys(Memory.intel.targets))
+  let targetRooms = !Memory.intel ? [] : _.shuffle(Object.keys(Memory.intel.targets))
   const assignedRooms = !Memory.intel ? [] : Object.keys(Memory.intel.active)
+
+  // In case target room cleanup failed manually clear it instead of wasting cpu.
+  if (targetRooms.length > (MAX_INTEL_TARGETS * 2)) {
+    Memory.intel.targets = {}
+    targetRooms = []
+  }
 
   if (targetRooms.length > 0) {
     let oldest = false
@@ -297,11 +320,10 @@ Room.getScoutTarget = function (creep) {
         age = Infinity
       } else {
         age = assignedRooms.indexOf(testRoom) >= 0 ? 0 : Game.time - roominfo[INTEL_UPDATED]
+        age = Math.floor(age / 10000) * 10000
       }
       if (target && oldest === age) {
-        let curDistance = Game.map.getRoomLinearDistance(creep.room.name, target)
-        let testDistance = Game.map.getRoomLinearDistance(creep.room.name, testRoom)
-        if (curDistance > testDistance) {
+        if (Math.random() >= 0.5) {
           target = testRoom
         }
       } else if (oldest < age) {

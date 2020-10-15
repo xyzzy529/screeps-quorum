@@ -38,15 +38,15 @@ RoomPosition.prototype.getAdjacent = function () {
   return results
 }
 
-RoomPosition.prototype.getSteppableAdjacent = function (includeCreeps = false) {
+RoomPosition.prototype.getSteppableAdjacent = function (includeCreeps = false, includeStructures = true) {
   return _.filter(this.getAdjacent(), function (pos) {
-    return pos.isSteppable(includeCreeps)
+    return pos.isSteppable(includeCreeps, includeStructures)
   })
 }
 
 RoomPosition.prototype.getAdjacentInRange = function (range = 1) {
   const bounds = createBoundingBoxForRange(this.x, this.y, range)
-  let positions = []
+  const positions = []
   for (let x = bounds.left; x <= bounds.right; x++) {
     for (let y = bounds.top; y <= bounds.bottom; y++) {
       positions.push(new RoomPosition(x, y, this.roomName))
@@ -57,7 +57,7 @@ RoomPosition.prototype.getAdjacentInRange = function (range = 1) {
 
 RoomPosition.prototype.getSteppableAdjacentInRange = function (range = 1) {
   const bounds = createBoundingBoxForRange(this.x, this.y, range)
-  let positions = []
+  const positions = []
   let position
   for (let x = bounds.left; x <= bounds.right; x++) {
     for (let y = bounds.top; y <= bounds.bottom; y++) {
@@ -68,15 +68,17 @@ RoomPosition.prototype.getSteppableAdjacentInRange = function (range = 1) {
   return positions
 }
 
-RoomPosition.prototype.isSteppable = function (includeCreeps = false) {
+RoomPosition.prototype.isSteppable = function (includeCreeps = false, includeStructures = true) {
   if (this.getTerrainAt() === 'wall') {
     return false
   }
-  const structures = this.lookFor(LOOK_STRUCTURES)
-  let structure
-  for (structure of structures) {
-    if (OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0) {
-      return false
+  if (includeStructures) {
+    const structures = this.lookFor(LOOK_STRUCTURES)
+    let structure
+    for (structure of structures) {
+      if (OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0) {
+        return false
+      }
     }
   }
   if (includeCreeps) {
@@ -87,13 +89,52 @@ RoomPosition.prototype.isSteppable = function (includeCreeps = false) {
   return true
 }
 
-RoomPosition.prototype.getMostOpenNeighbor = function () {
+RoomPosition.prototype.getLink = function (range = 2) {
+  if (this.__link) {
+    return this.__link
+  }
+  const room = Game.rooms[this.roomName]
+  if (!room || !room.structures[STRUCTURE_LINK]) {
+    return false
+  }
+  const pos = this
+  const links = _.filter(room.structures[STRUCTURE_LINK], a => pos.getRangeTo(a) <= range)
+  if (links.length < 1) {
+    return false
+  }
+  this.__link = links[0]
+  return this.__link
+}
+
+RoomPosition.prototype.getActiveLink = function () {
+  const link = this.getLink()
+  if (!link) {
+    return false
+  }
+
+  if (this.__linkActive) {
+    return link
+  }
+
+  if (typeof this.__linkActive === 'undefined') {
+    this.__linkActive = Game.rooms[this.roomName].controller.level === 8 || link.isActive()
+  }
+
+  return (this.__linkActive) ? link : false
+}
+
+RoomPosition.prototype.getMostOpenNeighbor = function (isBuildable = false, includeStructures = true) {
   const steppable = this.getSteppableAdjacent()
   let pos
   let best
   let score = 0
   for (pos of steppable) {
-    const posScore = pos.getSteppableAdjacent().length
+    if (isBuildable) {
+      if (pos.inFrontOfExit() || pos.isEdge()) {
+        continue
+      }
+    }
+    const posScore = pos.getSteppableAdjacent(false, includeStructures).length
     if (posScore > score) {
       score = posScore
       best = pos
@@ -107,7 +148,7 @@ RoomPosition.prototype.isEdge = function () {
 }
 
 RoomPosition.prototype.isExit = function () {
-  return this.isEdge() && Game.map.getTerrainAt(this) !== 'wall'
+  return this.isEdge() && this.getTerrainAt() !== 'wall'
 }
 
 RoomPosition.prototype.inFrontOfExit = function () {
@@ -125,7 +166,14 @@ RoomPosition.prototype.inFrontOfExit = function () {
 }
 
 RoomPosition.prototype.getTerrainAt = function () {
-  return Game.map.getTerrainAt(this)
+  switch (Game.map.getRoomTerrain(this.roomName).get(this.x, this.y)) {
+    case 0:
+      return 'plain'
+    case 1:
+      return 'wall'
+    case 2:
+      return 'swamp'
+  }
 }
 
 RoomPosition.prototype.getManhattanDistance = function (pos) {
@@ -163,11 +211,15 @@ RoomPosition.prototype.lookAround = function (range = 1) {
 }
 
 RoomPosition.prototype.getStructureByType = function (structureType) {
-  let structures = this.lookFor(LOOK_STRUCTURES)
-  let filteredStructures = _.filter(structures, function (structure) {
+  const structures = this.lookFor(LOOK_STRUCTURES)
+  const filteredStructures = _.filter(structures, function (structure) {
     return structure.structureType === structureType
   })
   return filteredStructures.length > 0 ? filteredStructures[0] : false
+}
+
+RoomPosition.prototype.getBoundingBoxForRange = function (range) {
+  return createBoundingBoxForRange(this.x, this.y, range)
 }
 
 /**
@@ -183,7 +235,7 @@ function createBoundingBoxForRange (x, y, range) {
   const right = Math.max(Math.min(x + absRange, 49), 0)
   const top = Math.min(Math.max(y - absRange, 0), 49)
   const bottom = Math.max(Math.min(y + absRange, 49), 0)
-  return {left, right, top, bottom}
+  return { left, right, top, bottom }
 }
 
 module.exports = {

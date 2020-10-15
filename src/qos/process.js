@@ -115,7 +115,7 @@ class Process {
       }
       const creepName = room.queueCreep(role, options)
       this.launchChildProcess(specificLabel, 'creep', {
-        'creep': creepName
+        creep: creepName
       })
     }
   }
@@ -136,6 +136,10 @@ class Process {
     }
 
     return false
+  }
+
+  sleep (ticks) {
+    kernel.scheduler.sleep(this.pid, ticks, true)
   }
 
   suicide () {

@@ -1,3 +1,4 @@
+'use strict'
 
 // Assumes a desired ratio of two hydrogen per one of every other base mineral.
 Mineral.getEmpireRatio = function () {
@@ -5,9 +6,9 @@ Mineral.getEmpireRatio = function () {
     return this.mineralRatio
   }
   const rooms = Room.getCities()
-  let resources = {}
+  const resources = {}
   let max = 0
-  for (let room of rooms) {
+  for (const room of rooms) {
     const roomIntel = Room.getIntel(room)
     if (!roomIntel[INTEL_MINERAL]) {
       continue
@@ -25,8 +26,8 @@ Mineral.getEmpireRatio = function () {
       max = resources[resourceType]
     }
   }
-  let ratio = {}
-  for (let resourceType of MINERALS_EXTRACTABLE) {
+  const ratio = {}
+  for (const resourceType of MINERALS_EXTRACTABLE) {
     if (!resources[resourceType]) {
       ratio[resourceType] = 0
     } else {
@@ -36,4 +37,35 @@ Mineral.getEmpireRatio = function () {
   this.mineralRatio = ratio
   this.mineralRatioSave = Game.time
   return this.mineralRatio
+}
+
+Mineral.getResourceType = function (resource) {
+  // Resource Specific
+  switch (resource) {
+    case RESOURCE_ENERGY:
+      return RESOURCE_ENERGY
+    case RESOURCE_POWER:
+      return RESOURCE_POWER
+    case RESOURCE_GHODIUM:
+      return RESOURCE_GHODIUM
+    case RESOURCE_HYDROXIDE:
+      return RESOURCE_HYDROXIDE
+    case RESOURCE_ZYNTHIUM_KEANITE:
+    case RESOURCE_UTRIUM_LEMERGITE:
+      return 'comp'
+  }
+
+  // Boost Families
+  switch (resource.length) {
+    case 1:
+      return 'base'
+    case 2:
+      return 'tier1'
+    case 4:
+      return 'tier2'
+    case 5:
+      return 'tier3'
+    default:
+      return false
+  }
 }

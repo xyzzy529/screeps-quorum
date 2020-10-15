@@ -6,17 +6,37 @@ Room.getCostmatrix = function (roomname, opts = {}) {
   const cm = Room.getStructuresCostmatrix(roomname, opts)
 
   // Add in creeps
-  if (!opts.ignoreCreeps && Game.rooms[roomname]) {
+  if (Game.rooms[roomname]) {
     const room = Game.rooms[roomname]
-    const creeps = room.find(FIND_CREEPS)
-    for (let creep of creeps) {
-      cm.set(creep.pos.x, creep.pos.y, 255)
+
+    if (!opts.ignoreCreeps) {
+      const creeps = room.find(FIND_CREEPS)
+      for (const creep of creeps) {
+        cm.set(creep.pos.x, creep.pos.y, 255)
+      }
+    }
+
+    // Keep creeps from cluttering up core structure hallways.
+    if (!opts.ignoreCore && room.storage && room.storage.my) {
+      // Above terminal, near tower cluster entrance
+      cm.set(room.storage.pos.x - 1, room.storage.pos.y - 1, 15)
+      cm.set(room.storage.pos.x - 2, room.storage.pos.y - 1, 20)
+      cm.set(room.storage.pos.x - 3, room.storage.pos.y - 1, 20)
+
+      // Row below terminal and storage
+      cm.set(room.storage.pos.x - 1, room.storage.pos.y + 1, 15)
+      cm.set(room.storage.pos.x, room.storage.pos.y + 1, 15)
+      cm.set(room.storage.pos.x + 1, room.storage.pos.y + 1, 7)
+
+      // Column below terminal (first element covered above)
+      cm.set(room.storage.pos.x - 1, room.storage.pos.y + 2, 15)
+      cm.set(room.storage.pos.x - 1, room.storage.pos.y + 3, 7)
     }
   }
 
   // Allow avoid ranges to be set by range
   if (opts.avoidRange) {
-    for (let avoid of opts.avoidRange) {
+    for (const avoid of opts.avoidRange) {
       const cost = avoid.value || 255
       setValuesInRange(cm, avoid.pos, avoid.range, cost)
     }
@@ -24,14 +44,14 @@ Room.getCostmatrix = function (roomname, opts = {}) {
 
   // Block all of these positions as unwalkable
   if (opts.avoid) {
-    for (let pos of opts.avoid) {
+    for (const pos of opts.avoid) {
       cm.set(pos.x, pos.y, 255)
     }
   }
 
   // Set these positions to just use terrain score
   if (opts.ignore) {
-    for (let pos of opts.ignore) {
+    for (const pos of opts.ignore) {
       cm.set(pos.x, pos.y, 0)
     }
   }
@@ -39,9 +59,10 @@ Room.getCostmatrix = function (roomname, opts = {}) {
   return cm
 }
 
-const CACHE_IGNORE_DESTRUCTABLE = 1 // 0001
-const CACHE_IGNORE_ROADS = 2 // 0010
-const CACHE_IGNORE_SOURCE_KEEPER = 4 // 0100
+const CACHE_IGNORE_DESTRUCTABLE = 1 << 0
+const CACHE_IGNORE_ROADS = 1 << 1
+const CACHE_IGNORE_SOURCE_KEEPER = 1 << 2
+const CACHE_IGNORE_PORTALS = 1 << 3
 
 Room.getStructuresCostmatrix = function (roomname, opts) {
   let flags = 0
@@ -54,13 +75,18 @@ Room.getStructuresCostmatrix = function (roomname, opts) {
   if (opts.ignoreSourceKeepers) {
     flags = flags | CACHE_IGNORE_SOURCE_KEEPER
   }
+  if (opts.ignorePortals) {
+    flags = flags | CACHE_IGNORE_PORTALS
+  }
   const cacheLabel = `${Room.serializeName(roomname)}_${(flags >>> 0)}`
 
-  let cmSerialized = sos.lib.cache.get(cacheLabel, {
-    ttl: Game.rooms[roomname] ? 25 : false
-  })
-  if (cmSerialized) {
-    return PathFinder.CostMatrix.deserialize(cmSerialized)
+  if (!opts.noCache) {
+    const cmSerialized = sos.lib.cache.get(cacheLabel, {
+      ttl: Game.rooms[roomname] ? 25 : false
+    })
+    if (cmSerialized) {
+      return PathFinder.CostMatrix.deserialize(cmSerialized)
+    }
   }
   const cm = new PathFinder.CostMatrix()
 
@@ -68,66 +94,77 @@ Room.getStructuresCostmatrix = function (roomname, opts) {
   if (!opts.ignoreSourceKeepers && Room.isSourcekeeper(roomname)) {
     const resourcePoses = Room.getResourcesPositions(roomname)
     if (resourcePoses) {
-      for (let pos of resourcePoses) {
+      for (const pos of resourcePoses) {
         setValuesInRange(cm, pos, 5, 15)
       }
     }
   }
 
   // Attempt to get structures from room.
-  if ((!opts.ignoreDestructibleStructures || !opts.ignoreRoads) && Game.rooms[roomname]) {
+  if ((!opts.ignoreDestructibleStructures || !opts.ignoreRoads || !opts.ignorePortals) && Game.rooms[roomname]) {
     const room = Game.rooms[roomname]
     const structures = room.find(FIND_STRUCTURES)
-    for (let structure of structures) {
+    for (const structure of structures) {
       if (structure.structureType === STRUCTURE_ROAD) {
+        if (opts.ignoreRoads) {
+          continue
+        }
         cm.set(structure.pos.x, structure.pos.y, 1)
         continue
       }
+      if (structure.structureType === STRUCTURE_PORTAL) {
+        if (opts.ignorePortals) {
+          continue
+        }
+        cm.set(structure.pos.x, structure.pos.y, 255)
+      }
       if (opts.ignoreDestructibleStructures) {
         continue
-      }
-      if (!structure.my && structure.structureType === STRUCTURE_RAMPART) {
-        cm.set(structure.pos.x, structure.pos.y, 255)
-      } else if (OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0) {
-        cm.set(structure.pos.x, structure.pos.y, 255)
+      } else {
+        if (!structure.my && structure.structureType === STRUCTURE_RAMPART) {
+          cm.set(structure.pos.x, structure.pos.y, 255)
+        } else if (OBSTACLE_OBJECT_TYPES.indexOf(structure.structureType) >= 0) {
+          cm.set(structure.pos.x, structure.pos.y, 255)
+        }
       }
     }
   }
 
   // Penalize exit squares to prevent accidental room changes
   if (!opts.ignoreExits) {
+    const terrain = Game.map.getRoomTerrain(roomname)
     for (let n = 0; n <= 49; n++) {
-      if (Game.map.getTerrainAt(0, n) === 'plain') {
+      if (terrain.isWalkable(0, n)) {
         cm.set(0, n, 15)
       }
-      if (Game.map.getTerrainAt(49, n) === 'plain') {
+      if (terrain.isWalkable(49, n)) {
         cm.set(49, n, 15)
       }
-      if (Game.map.getTerrainAt(n, 0) === 'plain') {
+      if (terrain.isWalkable(n, 0)) {
         cm.set(n, 0, 15)
       }
-      if (Game.map.getTerrainAt(n, 49) === 'plain') {
+      if (terrain.isWalkable(n, 49)) {
         cm.set(n, 49, 15)
       }
     }
   }
 
-  sos.lib.cache.set(cacheLabel, cm.serialize(), {
-    persist: true,
-    maxttl: 3000,
-    compress: true
-  })
+  if (!opts.noCache) {
+    sos.lib.cache.set(cacheLabel, cm.serialize(), {
+      persist: true,
+      maxttl: 3000,
+      compress: true
+    })
+  }
   return cm
 }
 
-function setValuesInRange (cm, pos, range, value) {
-  const left = pos.x - value
-  const right = pos.x + value
-  const top = pos.y - value
-  const bottom = pos.y + value
-  for (let x = left > 0 ? left : 0; x <= (right < 40 ? right : 49); x++) {
-    for (let y = bottom > 0 ? bottom : 0; y <= (top < 40 ? top : 49); y++) {
-      cm.set(x, y, 255)
+function setValuesInRange (cm, pos, range, value = 255) {
+  const { left, right, top, bottom } = pos.getBoundingBoxForRange(range)
+
+  for (let x = left; x <= right; x++) {
+    for (let y = bottom; y <= top; y++) {
+      cm.set(x, y, value)
     }
   }
 }

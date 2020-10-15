@@ -7,14 +7,15 @@ global.LOG_INFO = 2
 global.LOG_DEBUG = 1
 global.LOG_TRACE = 0
 
+const NOTIFY_RATELIMIT = 1500
 const ERROR_COLORS = {
-  '5': '#ff0066',
-  '4': '#e65c00',
-  '3': '#809fff',
-  '2': '#999999',
-  '1': '#737373',
-  '0': '#666666',
-  'highlight': '#ffff00'
+  5: '#ff0066',
+  4: '#e65c00',
+  3: '#809fff',
+  2: '#999999',
+  1: '#737373',
+  0: '#666666',
+  highlight: '#ffff00'
 }
 
 class Logger {
@@ -27,15 +28,26 @@ class Logger {
       group = this.defaultLogGroup
     }
 
+    if (typeof message === 'string' && message.includes('RangeError: Array buffer allocation failed')) {
+      group = 'ivm'
+      message = 'RangeError: Array buffer allocation failed'
+    }
+
     if (group !== 'default') {
-      message = group + ': ' + message
+      message = `[${Game.shard.name}] ${group}: ${message}`
+    } else {
+      message = `[${Game.shard.name}] ${message}`
     }
 
     if (severity >= LOG_ERROR) {
-      qlib.notify.send(message, 500)
+      qlib.notify.send(message, NOTIFY_RATELIMIT)
     }
 
-    if (Memory.loglevel && Memory.loglevel > severity) {
+    let loglevel = Memory.loglevel
+    if (typeof loglevel === 'object') {
+      loglevel = loglevel[group] || loglevel.default
+    }
+    if (loglevel && loglevel > severity) {
       return
     }
 
@@ -63,7 +75,7 @@ class Logger {
 
   highlight (message) {
     return this.log(message, 'highlight', false, {
-      'type': 'highlight'
+      type: 'highlight'
     })
   }
 

@@ -1,9 +1,31 @@
+'use strict'
+
+StructureController.prototype.getLinkPosition = function () {
+  const neighbors = this.pos.getSteppableAdjacent()
+  let best = false
+  let bestNeighbors = 0
+  for (const neighbor of neighbors) {
+    neighbor.adjacent = neighbor.getSteppableAdjacent()
+    if (neighbor.adjacent.length > bestNeighbors) {
+      best = neighbor
+      bestNeighbors = neighbor.adjacent.length
+    }
+  }
+  return best.getMostOpenNeighbor(true)
+}
+
+StructureController.prototype.getLink = function () {
+  if (!this.__link) {
+    this.__link = this.pos.getLink()
+  }
+  return this.__link
+}
 
 StructureController.prototype.isTimingOut = function () {
   if (!this.level || !CONTROLLER_DOWNGRADE[this.level]) {
     return false
   }
-  return CONTROLLER_DOWNGRADE[this.level] - this.ticksToDowngrade > 4000
+  return (CONTROLLER_DOWNGRADE[this.level] - this.ticksToDowngrade > 4000) || this.ticksToDowngrade < 4000
 }
 
 StructureController.prototype.canSafemode = function () {
